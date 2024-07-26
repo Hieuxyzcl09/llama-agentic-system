@@ -27,23 +27,30 @@ EVENT_LOOP = asyncio.new_event_loop()
 EventType = AgenticSystemTurnResponseEventType
 
 
-def transform(content: InterleavedTextAttachment):
+def transform(content: InterleavedTextAttachment, chat_history=None):
     state = me.state(State)
 
-    input_message = UserMessage(content=content)
+    # Nếu có lịch sử chat, chuyển đổi nó thành định dạng phù hợp
+    messages = []
+    if chat_history:
+        for entry in chat_history:
+            if entry['role'] == 'user':
+                messages.append(UserMessage(content=entry['content']))
+            elif entry['role'] == 'assistant':
+                messages.append(CompletionMessage(content=entry['content']))
+
+    # Thêm tin nhắn hiện tại vào danh sách
+    messages.append(UserMessage(content=content))
 
     client_manager = ClientManager()
     client = client_manager.get_client()
 
-    generator = sync_generator(EVENT_LOOP, client.run([input_message]))
+    generator = sync_generator(EVENT_LOOP, client.run(messages))
+    response_content = ""
     for chunk in generator:
         if not hasattr(chunk, "event"):
-            # Need to check for custom tool first
-            # since it does not produce event but instead
-            # a Message
             if isinstance(chunk, ToolResponseMessage):
                 yield str(uuid.uuid4()), chunk
-
             continue
 
         event = chunk.event
@@ -65,6 +72,7 @@ def transform(content: InterleavedTextAttachment):
                     if existing:
                         if isinstance(delta.content, str):
                             existing.content += delta.content
+                            response_content += delta.content
 
                         if delta.parse_status == ToolCallParseStatus.failure:
                             existing.content = (
@@ -80,14 +88,14 @@ def transform(content: InterleavedTextAttachment):
                 else:
                     if existing and isinstance(existing, CompletionMessage):
                         existing.content += event.payload.model_response_text_delta
+                        response_content += event.payload.model_response_text_delta
                         yield step_uuid, existing
                     else:
                         yield step_uuid, CompletionMessage(
                             content=event.payload.model_response_text_delta,
-                            # this is bad, I am needing to make this up. we probably don't need a Message
-                            # struct in StepStatus, but just content with some metadata
                             stop_reason=StopReason.end_of_turn,
                         )
+                        response_content += event.payload.model_response_text_delta
             elif step_type == StepType.tool_execution:
                 pass
 
@@ -109,11 +117,13 @@ def transform(content: InterleavedTextAttachment):
                             content=chat_moderation_message,
                             stop_reason=StopReason.end_of_turn,
                         )
+                        response_content += chat_moderation_message
                     elif response.violation_return_message:
                         yield step_uuid, CompletionMessage(
                             content=response.violation_return_message,
                             stop_reason=StopReason.end_of_turn,
                         )
+                        response_content += response.violation_return_message
                     else:
                         yield step_uuid, StepStatus(
                             step_type=StepType.shield_call,
@@ -133,3 +143,6 @@ def transform(content: InterleavedTextAttachment):
                     step_type=StepType.tool_execution,
                     content=response.content,
                 )
+                response_content += response.content
+
+    return response_content
