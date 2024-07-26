@@ -28,3 +28,5 @@ usort==1.0.8
 uvicorn
 yfinance
 zmq
+Flask==2.1.0
+Flask-SQLAlchemy==2.5.1
