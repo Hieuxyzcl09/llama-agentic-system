@@ -34,6 +34,31 @@ def page():
         on_attach=on_attach,
     )
 
+@me.api("/api/chat", methods=["POST"])
+def api_chat():
+    data = request.json
+    user_id = data.get('user_id')
+    message = data.get('message')
+    
+    if not user_id or not message:
+        return jsonify({"error": "Missing user_id or message"}), 400
+    
+    # Lấy lịch sử chat của người dùng
+    user_history = chat_history.get(user_id, [])
+    
+    # Thêm tin nhắn mới vào lịch sử
+    user_history.append({"role": "user", "content": message})
+    
+    # Gọi hàm transform để xử lý tin nhắn và lịch sử chat
+    response = transform(message, user_history)
+    
+    # Thêm phản hồi vào lịch sử
+    user_history.append({"role": "assistant", "content": response})
+    
+    # Lưu lịch sử cập nhật
+    chat_history[user_id] = user_history
+    
+    return jsonify({"response": response})
 
 if __name__ == "__main__":
     import subprocess
